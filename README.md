@@ -19,9 +19,10 @@
 10. [Risiko-Management](#risiko-management)
 11. [Markt-Regime](#markt-regime)
 12. [Korrelations-Schutz](#korrelations-schutz)
-13. [Dateistruktur](#dateistruktur)
-14. [Realistische Erwartungen](#realistische-erwartungen)
-15. [Sicherheitshinweise](#sicherheitshinweise)
+13. [Backtesting & Optimierung](#backtesting--optimierung)
+14. [Dateistruktur](#dateistruktur)
+15. [Realistische Erwartungen](#realistische-erwartungen)
+16. [Sicherheitshinweise](#sicherheitshinweise)
 
 ---
 
@@ -31,7 +32,7 @@ AIvestor ist ein vollautomatischer Trading-Bot für Binance, der auf einem regel
 
 ### Kernprinzipien
 
-- **Kein Gambling** — Trade nur wenn mindestens 7 von 12 möglichen Punkten erreicht
+- **Kein Gambling** — Trade nur wenn mindestens 8 von 14 möglichen Punkten erreicht
 - **Kapitalerhalt zuerst** — Trailing Stop und Partial-TP sichern Gewinne
 - **Marktbewusstsein** — BTC-Regime bestimmt ob überhaupt gehandelt wird
 - **Keine Korrelationsfallen** — Nie zwei stark korrelierte Coins gleichzeitig
@@ -44,14 +45,19 @@ AIvestor ist ein vollautomatischer Trading-Bot für Binance, der auf einem regel
 |---------|--------------|
 | **Multi-Symbol** | 8 Paare gleichzeitig: BTC, ETH, BNB, SOL, AVAX, LINK, XRP, DOT |
 | **Multi-Timeframe** | 4H Trend + 1H Struktur + 15m Entry-Präzision |
-| **Score-System** | 0–12 Punkte, mindestens 7 zum Traden |
+| **Score-System** | 0–14 Punkte, mindestens 8 zum Traden |
 | **Markt-Regime** | BTC als Marktbarometer (BULL / BEAR / NEUTRAL) |
 | **Korrelations-Schutz** | Gruppierung, max. 1 Trade pro Gruppe |
 | **Partial Take-Profit** | TP1 bei 2:1 schließt 50%, TP2 bei 4:1 schließt Rest |
 | **Trailing Stop-Loss** | SL zieht automatisch mit dem Preis mit |
 | **Breakeven** | Nach TP1 wird SL auf Einstiegspreis gesetzt |
+| **Server-Side Stop-Loss** | Nach TP1: SL-Order direkt bei Binance (Flash-Crash-Schutz) |
+| **OCO-Schutz** | Race-Condition-sichere OCO-Verwaltung, kein doppelter Verkauf |
 | **Dynamische Positionsgröße** | Normal 1%, High-Confidence 1.5% Risiko |
 | **Trade-Log** | Jede Entscheidung wird in `trades_log.json` dokumentiert |
+| **Backtesting** | Walk-Forward-Simulation auf historischen Daten mit Fees und Slippage |
+| **Parameter-Optimizer** | 5-Phasen-Optimierung (SL+Score → TP → Trailing → Timing → OOS-Validierung) |
+| **Risk-Manager** | Drawdown-Circuit-Breaker, Kelly-Criterion Positionsgröße |
 | **Testnet-Modus** | Vollständiges Testen ohne echtes Geld |
 
 ---
@@ -92,7 +98,7 @@ Bedingung:
   ✓ MACD bullish Crossover
   ✓ Volume mindestens 1.5x über Durchschnitt
 
-Ergebnis: BUY Signal mit Score ≥ 7
+Ergebnis: BUY Signal mit Score ≥ 8
 ```
 
 ### Gewinnmitnahme-Strategie
@@ -157,7 +163,7 @@ Falls Preis fällt:
    c. Score-System anwenden
    d. Korrelations-Check
    e. Regime-Filter
-   f. Bei Score ≥ 7: Order platzieren
+   f. Bei Score ≥ 8: Order platzieren
 ```
 
 ---
@@ -193,6 +199,7 @@ pip install -r requirements.txt
 | `requests` | HTTP-Anfragen |
 | `colorama` | Farbige Terminal-Ausgabe |
 | `python-dotenv` | Umgebungsvariablen aus `.env` |
+| `pytest` | Unit-Tests (Entwicklung) |
 
 ### Schritt 3: Umgebungsvariablen konfigurieren
 
@@ -233,18 +240,27 @@ MAX_PER_GROUP      = 1     # Max. 1 Trade pro Korrelations-Gruppe
 ### Signal-Schwellenwerte
 
 ```python
-MIN_SCORE       = 7    # Mindest-Score für einen Trade (von 12)
-HIGH_CONF_SCORE = 9    # "Starkes" Signal → größere Position
+MIN_SCORE       = 8    # Mindest-Score für einen Trade (von 14) — optimiert via Backtest
+HIGH_CONF_SCORE = 11   # "Starkes" Signal → größere Position
 MIN_CRV         = 2.0  # Mindest Chance-Risiko-Verhältnis (2:1)
 ```
 
 ### Take-Profit und Stop-Loss
 
 ```python
-SL_ATR_MULTIPLIER    = 1.5  # SL = Preis ± (1.5 × ATR)
-TRAIL_ATR_MULTIPLIER = 1.0  # Trailing SL = Preis - (1.0 × ATR)
+SL_ATR_MULTIPLIER    = 2.0  # SL = Preis ± (2.0 × ATR) — optimiert
+TRAIL_ATR_MULTIPLIER = 2.5  # Trailing SL = Preis - (2.5 × ATR), optimiert
 TP1_RR               = 2.0  # TP1 bei 2:1 → 50% schließen
 TP2_RR               = 4.0  # TP2 bei 4:1 → Rest schließen
+```
+
+### Zeitbasierte Exits und Trailing
+
+```python
+MAX_TRADE_HOURS     = 48   # Breakeven-Exit falls TP1 nicht erreicht — optimiert
+STALE_TRADE_HOURS   = 72   # Force-Close nach 72h — optimiert
+TRAIL_STEP_PCT      = 0.8  # SL in 0.8%-Stufen nachziehen — optimiert
+TRAIL_ACTIVATION_RR = 1.5  # Trailing erst nach 1.5:1 R:R — optimiert
 ```
 
 ### Umgebungsvariablen (.env)
@@ -310,7 +326,7 @@ python bot.py
 *****************************************************************
   TESTNET-MODUS — kein echtes Geld
   Symbole (8): BTCUSDT, ETHUSDT, BNBUSDT, SOLUSDT, ...
-  Strategie: MTF (4H+1H+15m) | Min-Score: 7/12
+  Strategie: MTF (4H+1H+15m) | Min-Score: 8/14
   Max Positionen: 3 (max 1 pro Gruppe)
 *****************************************************************
 
@@ -321,8 +337,8 @@ python bot.py
   Offene Positionen: 1/3
 =================================================================
 
-  ETHUSDT [Gruppe A] | BUY | Score: 9/12 [*********...]
-    Score 9/12 (HIGH) | CRV 2.1:1 | ATR=45.20
+  ETHUSDT [Gruppe A] | BUY | Score: 9/14 [*********.....]
+    Score 9/14 (NORMAL) | CRV 2.1:1 | ATR=45.20
     Entry: $2,327.00 | SL: $2,259.20 | TP1: $2,462.60 | TP2: $2,598.20
 
   Öffne Long: ETHUSDT...
@@ -335,23 +351,23 @@ python bot.py
 
 ## Signal-System
 
-### Score-Tabelle (max. 12 Punkte)
+### Score-Tabelle (max. 14 Punkte)
 
 | Signal | Punkte | Beschreibung |
 |--------|--------|--------------|
-| **4H Trend-Alignment** | 2–3 | EMA 9>21>50 + 3 steigende Kerzen = 3 Punkte |
-| **1H Struktur** | 0–2 | EMA-Ausrichtung + RSI in Range |
-| **15m EMA-Alignment** | 0–2 | EMA 9>21>50 auf Entry-Timeframe |
-| **RSI-Momentum** | 0–2 | RSI steigt aus überverkauft = 2 Punkte |
-| **MACD-Crossover** | 0–2 | Frischer Crossover = 2, bereits drüber = 1 |
-| **Volume-Bestätigung** | 0–1 | Volume ≥ 1.5x Durchschnitt |
+| **4H Trend-Richtung** | 0–3 | Wohin geht der Markt? |
+| **4H/1H Trendstaerke ADX** | 0–2 | Wie stark ist der Trend? |
+| **15m Pullback-to-EMA** | 0–2 | Guter Einstiegspunkt? |
+| **RSI-Momentum** | 0–2 | Beschleunigt der Preis? |
+| **MACD-Crossover** | 0–2 | Momentum-Wechsel? |
+| **Volume-Surge** | 0–3 | Institutionelle Beteiligung? |
 
 ### Entscheidungslogik
 
 ```
-Score ≥ 9  →  HIGH-CONFIDENCE Trade (1.5% Risiko)
-Score 7–8  →  NORMAL Trade (1.0% Risiko)
-Score < 7  →  NO TRADE
+Score ≥ 11 →  HIGH-CONFIDENCE Trade (1.5% Risiko)
+Score 8–10 →  NORMAL Trade (1.0% Risiko)
+Score < 8  →  NO TRADE
 ```
 
 ### Chance-Risiko-Verhältnis (CRV)
@@ -386,14 +402,19 @@ Beispiel ($1.000 Konto, BTC bei $74.000, SL bei $72.850):
 
 ```
 Nach Entry:
-  SL = aktueller Preis - (1.0 × ATR)
+  SL = aktueller Preis - (2.5 × ATR)
+
+Aktivierung: erst nach 1.5:1 R:R im Plus
+Nachziehen: in 0.8%-Stufen (reduziert Whipsaw)
 
 Bei jedem neuen Preishoch:
-  Neuer SL = neues Hoch - (1.0 × ATR)
-  (Nur wenn neuer SL > alter SL)
+  Neuer SL = neues Hoch - (2.5 × ATR)
+  (Nur wenn neuer SL > alter SL + 0.8%)
 
 Nach TP1:
   SL = Entry-Preis (Breakeven)
+  → Server-Side SL-Order bei Binance platziert
+  → Trailing Stop zieht SL-Order automatisch nach
   → Ab hier kein Verlust mehr möglich
 ```
 
@@ -405,7 +426,8 @@ Nach TP1:
 | 3 Losing Trades | -3% des Kontos |
 | 10 Losing Trades in Folge | -10% des Kontos |
 | TP1 erreicht, dann SL | 0% Verlust (Breakeven) |
-| Flash Crash | Slippage möglich, SL nicht garantiert |
+| Flash Crash vor TP1 | OCO-Order greift bei Binance, Slippage möglich |
+| Flash Crash nach TP1 | Server-Side SL-Order greift, kein Polling nötig |
 
 ---
 
@@ -466,29 +488,91 @@ Verboten:  BTC long + ETH long (beide Gruppe A)
 
 ---
 
+## Backtesting & Optimierung
+
+AIvestor enthält eine vollständige Backtesting-Engine und einen mehrstufigen Parameter-Optimizer, um die Strategie auf historischen Daten zu validieren und optimale Einstellungen zu finden.
+
+### Backtester
+
+```bash
+python backtester.py                      # Standard-Backtest (alle Symbole)
+python backtester.py --start 2024-01-01   # Ab bestimmtem Datum
+python backtester.py --symbol BTCUSDT     # Einzelnes Symbol
+```
+
+Der Backtester simuliert die exakte Strategie auf historischen Klines-Daten:
+- Download historischer Daten von Binance (mit lokalem Parquet-Cache)
+- Walk-Forward-Simulation auf 15m-Kerzen
+- Realistische Fees (0.10%) und Slippage (0.05%)
+- Performance-Report mit Sharpe Ratio, Max Drawdown, Win-Rate
+
+### Optimizer
+
+```bash
+python optimizer.py
+```
+
+5-Phasen-Optimierung mit 70/30 Train/Test-Split:
+
+| Phase | Parameter | Beschreibung |
+|-------|-----------|--------------|
+| 1 — SL+Score | SL_ATR, MIN_SCORE, HIGH_CONF_SCORE | Stop-Loss-Weite und Score-Schwellen |
+| 2 — TP | TP1_RR, TP2_RR | Take-Profit-Levels optimieren |
+| 3 — Trailing | TRAIL_ATR, TRAIL_STEP, TRAIL_ACTIVATION | Trailing-Stop feinjustieren |
+| 4 — Timing | MAX_TRADE_HOURS, STALE_TRADE_HOURS | Zeitbasierte Exits optimieren |
+| 5 — OOS-Validierung | Alle | Bester Parameter-Satz auf 30% Out-of-Sample-Daten testen |
+
+### Optimierte Parameter (Backtest-Ergebnis)
+
+Die folgenden Parameter wurden durch die 5-Phasen-Optimierung auf historischen Daten (8 Symbole, 2025-01 bis 2026-03, 70/30 Train/Test-Split) ermittelt und in `config.py` gesetzt:
+
+| Parameter | Vorher | Optimiert | Auswirkung |
+|-----------|--------|-----------|------------|
+| `SL_ATR_MULTIPLIER` | 1.5 | **2.0** | Breiterer SL, weniger Noise-Exits |
+| `MIN_SCORE` | 7 | **8** | Weniger, aber qualitativ bessere Trades |
+| `HIGH_CONF_SCORE` | 9 | **11** | Strengere High-Confidence-Schwelle |
+| `TRAIL_ATR_MULTIPLIER` | 1.0 | **2.5** | Breiterer Trailing, weniger Whipsaw |
+| `TRAIL_STEP_PCT` | 0.3 | **0.8** | Gröbere Stufen, weniger vorzeitige Exits |
+| `TRAIL_ACTIVATION_RR` | 1.0 | **1.5** | Trailing erst bei stabilerem Profit |
+| `MAX_TRADE_HOURS` | 24 | **48** | Mehr Zeit für TP1 |
+| `STALE_TRADE_HOURS` | 48 | **72** | Weniger Force-Closes |
+
+---
+
 ## Dateistruktur
 
 ```
 AIvestor/
 │
 ├── bot.py                # Hauptprogramm, Kontrollschleife
-├── config.py             # Alle Einstellungen
+├── config.py             # Alle Einstellungen (inkl. optimierte Parameter)
 │
 ├── signal_engine.py      # Multi-Timeframe Score-System
 ├── market_regime.py      # BTC-Regime Erkennung
 ├── indicators.py         # EMA, RSI, MACD, ATR Berechnung
 │
-├── data_fetcher.py       # Binance Marktdaten (kein API Key nötig)
+├── data_fetcher.py       # Binance Marktdaten (parallel, kein API Key nötig)
 ├── exchange.py           # Binance Order-Ausführung (API Key nötig)
-├── order_executor.py     # Long-Entry, Trailing-SL, Partial-TP
-├── position_manager.py   # Positions-Tracking (positions.json)
+├── order_executor.py     # Long-Entry, Trailing-SL, Partial-TP, OCO-Management
+├── position_manager.py   # Positions-Tracking (positions.json, atomare Writes)
 │
+├── risk_manager.py       # Drawdown-Circuit-Breaker, Kelly-Sizing, Trade-Stats
+├── performance.py        # Performance-Tracking, tägliche P&L, Reports
 ├── logger.py             # Trade-Dokumentation (trades_log.json)
 │
-├── main.py               # Legacy Entry-Point
+├── backtester.py         # Backtesting-Engine (Walk-Forward, Fees, Slippage)
+├── optimizer.py          # 5-Phasen Parameter-Optimizer
+│
+├── main.py               # Legacy Entry-Point (→ bot.py)
 ├── requirements.txt      # Python-Abhängigkeiten
 ├── .env.example          # Vorlage für API Keys
-└── .gitignore            # Schützt .env und Logs vor Git
+├── .gitignore            # Schützt .env und Logs vor Git
+│
+└── tests/                # Unit-Tests (37 Tests)
+    ├── conftest.py
+    ├── test_signal_engine.py
+    ├── test_position_manager.py
+    └── test_risk_manager.py
 ```
 
 ### Automatisch erstellte Dateien (nicht in Git)
@@ -521,12 +605,20 @@ Woche 3–4:  Live mit $50–100 — erste echte Erfahrungen
 Monat 2+:   Live mit $500–1.000 — wenn Testnet profitabel war
 ```
 
+### Tests
+
+```bash
+python -m pytest tests/ -v
+```
+
+37 Tests für Signal-Engine (Score-Berechnung, Signal-Generierung), Position-Manager (CRUD, Datenintegrität) und Risk-Manager (Drawdown-Limits, Kelly-Sizing, Trade-Stats).
+
 ### Was den Bot limitiert
 
 - Handelt nur **Spot** (kein Futures, kein Hebel)
-- Nur **Long-Positionen** (kein Short-Selling im Spot)
+- Nur **Long-Positionen** — SELL-Signale werden erkannt, aber als NO TRADE behandelt
 - Keine Nachrichten-Auswertung
-- Kein Backtesting eingebaut (empfohlen vor Live-Start)
+- Backtesting und Optimizer verfügbar — Parameter wurden auf historischen Daten optimiert
 
 ---
 
